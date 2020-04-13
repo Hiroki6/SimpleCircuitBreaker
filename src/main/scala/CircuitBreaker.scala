@@ -1,53 +1,48 @@
-import cats.data.Kleisli
-import cats.effect.IO
+import cats.MonadError
+import cats.effect.Sync
 import cats.effect.concurrent.Ref
+import cats.syntax.applicativeError._
+import cats.syntax.flatMap._
+import cats.syntax.functor._
 
-class CircuitBreaker[A, B](service: A => IO[B]) {
-  def runService: Kleisli[IO, BreakerOptions, (CircuitBreakerState, A => IO[B])] = Kleisli { breakerOptions =>
-    for {
-      ref <- Ref.of[IO, BreakerStatus](BreakerClosed(0))
-    } yield {
-      (CircuitBreakerState(List(ref)), breakerService(breakerOptions)(ref))
-    }
-  }
-
-  private def breakerService(breakerOptions: BreakerOptions)(ref: Ref[IO, BreakerStatus])(request: A): IO[B] =
-    ref.get.flatMap {
-      case BreakerClosed(_) => callIfClosed(breakerOptions)(request, ref)
-      case BreakerOpen(_) => callIfOpen(breakerOptions)(request, ref)
+class CircuitBreaker[F[_], A, B](breakerOptions: BreakerOptions, state: Ref[F, BreakerStatus])(implicit ME: MonadError[F, Throwable]) {
+  def withCircuitBreaker(body: F[B]): F[B] =
+    state.get.flatMap {
+      case BreakerClosed(_) => callIfClosed(body)
+      case BreakerOpen(_) => callIfOpen(body)
     }
 
-  private def callIfClosed(breakerOptions: BreakerOptions)(request: A, ref: Ref[IO, BreakerStatus]): IO[B] =
-    service(request).handleErrorWith {
+  private def callIfClosed(body: F[B]): F[B] =
+    body.handleErrorWith {
       e => {
-        incError(breakerOptions)(ref)
-        IO.raiseError(e)
+        incError(state)
+        ME.raiseError(e)
       }
     }
 
-  private def callIfOpen(breakerOptions: BreakerOptions)(request: A, ref: Ref[IO, BreakerStatus]): IO[B] =
-    Utils.getCurrentTime.flatMap { currentTime =>
-      ref.modify {
+  private def callIfOpen(body: F[B]): F[B] =
+    Utils.getCurrentTime[F].flatMap { currentTime =>
+      state.modify {
         case status@BreakerClosed(_) => (status, false)
         case status@BreakerOpen(timeOpened) => {
           if(currentTime > timeOpened) ((BreakerOpen(currentTime+(breakerOptions.resetTimeoutSecs))), true)
           else (status, false)
         }
       }.flatMap { canaryResult =>
-        if(canaryResult) canaryCall(breakerOptions)(request, ref)
+        if(canaryResult) canaryCall(body)
         else failingCall(breakerOptions)
       }
     }
 
-  private def canaryCall(breakerOptions: BreakerOptions)(request: A, ref: Ref[IO, BreakerStatus]) : IO[B] =
+  private def canaryCall(body: F[B]): F[B] =
     for {
-      result <- callIfClosed(breakerOptions)(request, ref)
+      result <- callIfClosed(body)
     } yield {
-      ref.set(BreakerClosed(0))
+      state.set(BreakerClosed(0))
       result
     }
 
-  private def incError(breakerOptions: BreakerOptions)(ref: Ref[IO, BreakerStatus]) =
+  private def incError(ref: Ref[F, BreakerStatus]) =
     Utils.getCurrentTime.flatMap { currentTime =>
       ref.modify {
         case BreakerClosed(errorCount) => {
@@ -59,4 +54,11 @@ class CircuitBreaker[A, B](service: A => IO[B]) {
     }
 
   private def failingCall(breakerOptions: BreakerOptions) = throw CircuitBreakerException(breakerOptions.breakerDescription)
+}
+
+object CircuitBreaker {
+  def create[F[_], A, B](implicit S: Sync[F], ME: MonadError[F, Throwable]): F[CircuitBreaker[F, A, B]] =
+    Ref.of[F, BreakerStatus](BreakerClosed(0)).map { ref =>
+      new CircuitBreaker[F, A, B](BreakerOptions.breakerOptions, ref)
+    }
 }
