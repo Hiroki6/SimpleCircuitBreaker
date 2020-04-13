@@ -11,7 +11,7 @@ class CircuitBreaker[A, B](service: A => IO[B]) {
     }
   }
 
-  private def breakerService(breakerOptions: BreakerOptions)(ref: Ref[IO, BreakerOptions])(request: A): IO[B] =
+  private def breakerService(breakerOptions: BreakerOptions)(ref: Ref[IO, BreakerStatus])(request: A): IO[B] =
     ref.get.flatMap {
       case BreakerClosed(_) => callIfClosed(breakerOptions)(request, ref)
       case BreakerOpen(_) => callIfOpen(breakerOptions)(request, ref)
@@ -19,7 +19,10 @@ class CircuitBreaker[A, B](service: A => IO[B]) {
 
   private def callIfClosed(breakerOptions: BreakerOptions)(request: A, ref: Ref[IO, BreakerStatus]): IO[B] =
     service(request).handleErrorWith {
-      _ => incError(breakerOptions)(ref)
+      e => {
+        incError(breakerOptions)(ref)
+        IO.raiseError(e)
+      }
     }
 
   private def callIfOpen(breakerOptions: BreakerOptions)(request: A, ref: Ref[IO, BreakerStatus]): IO[B] =
