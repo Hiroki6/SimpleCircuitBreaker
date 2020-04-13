@@ -1,10 +1,10 @@
-import cats.effect.IO
+import cats.effect.{ExitCode, IO, IOApp}
 import cats.implicits._
-import scala.concurrent.ExecutionContext.global
 
-object Main extends App {
-  val service: Int => IO[String] = req => IO("success")
-  implicit val cs = IO.contextShift(global)
+object Main extends IOApp {
+  def service(req: Int): IO[String] = {
+    IO { throw new Exception("test") }
+  }
 
   val program: IO[Unit] = for {
     circuitBreaker <- CircuitBreaker.create[IO, Int, String]
@@ -17,4 +17,8 @@ object Main extends App {
       r3.start
     ).parSequence.void
   } yield ()
+
+  override def run(args: List[String]): IO[ExitCode] = {
+    program.as(ExitCode.Success)
+  }
 }

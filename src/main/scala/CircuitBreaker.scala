@@ -4,29 +4,27 @@ import cats.effect.concurrent.Ref
 import cats.syntax.applicativeError._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
+import cats.syntax.apply._
 
-class CircuitBreaker[F[_], A, B](breakerOptions: BreakerOptions, state: Ref[F, BreakerStatus])(implicit ME: MonadError[F, Throwable]) {
+class CircuitBreaker[F[_], A, B](breakerOptions: BreakerOptions, status: Ref[F, BreakerStatus])(implicit S: Sync[F], ME: MonadError[F, Throwable]) {
   def withCircuitBreaker(body: F[B]): F[B] =
-    state.get.flatMap {
-      case BreakerClosed(_) => callIfClosed(body)
-      case BreakerOpen(_) => callIfOpen(body)
-    }
+    status.get.flatMap {
+       case BreakerClosed(_) => callIfClosed(body)
+       case BreakerOpen(_) => callIfOpen(body)
+      }
 
   private def callIfClosed(body: F[B]): F[B] =
     body.handleErrorWith {
-      e => {
-        incError(state)
-        ME.raiseError(e)
-      }
+      e => incError() *> ME.raiseError(e)
     }
 
   private def callIfOpen(body: F[B]): F[B] =
     Utils.getCurrentTime[F].flatMap { currentTime =>
-      state.modify {
-        case status@BreakerClosed(_) => (status, false)
-        case status@BreakerOpen(timeOpened) => {
-          if(currentTime > timeOpened) ((BreakerOpen(currentTime+(breakerOptions.resetTimeoutSecs))), true)
-          else (status, false)
+      status.modify {
+        case closed@BreakerClosed(_) => (closed, false)
+        case open@BreakerOpen(timeOpened) => {
+          if(currentTime > timeOpened) (BreakerOpen(currentTime+breakerOptions.resetTimeoutSecs), true)
+          else (open, false)
         }
       }.flatMap { canaryResult =>
         if(canaryResult) canaryCall(body)
@@ -35,21 +33,16 @@ class CircuitBreaker[F[_], A, B](breakerOptions: BreakerOptions, state: Ref[F, B
     }
 
   private def canaryCall(body: F[B]): F[B] =
-    for {
-      result <- callIfClosed(body)
-    } yield {
-      state.set(BreakerClosed(0))
-      result
-    }
+    callIfClosed(body) <* status.set(BreakerClosed(0))
 
-  private def incError(ref: Ref[F, BreakerStatus]) =
+  private def incError() =
     Utils.getCurrentTime.flatMap { currentTime =>
-      ref.modify {
+      status.update {
         case BreakerClosed(errorCount) => {
-          if(errorCount >= breakerOptions.maxBreakerFailures) (BreakerOpen(currentTime+breakerOptions.resetTimeoutSecs), ())
-          else (BreakerClosed(errorCount + 1), ())
+          if(errorCount >= breakerOptions.maxBreakerFailures) BreakerOpen(currentTime+breakerOptions.resetTimeoutSecs)
+          else BreakerClosed(errorCount + 1)
         }
-        case other => (other, ())
+        case other => other
       }
     }
 
