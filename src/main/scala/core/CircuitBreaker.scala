@@ -32,33 +32,34 @@ object CircuitBreaker {
           }
 
         def callIfOpen(body: F[A]): F[A] =
-          Utils.getCurrentTime[F].flatMap { currentTime =>
-            status.take.flatMap {
+          for {
+            currentTime <- Utils.getCurrentTime[F]
+            s <- status.take
+            canaryResult <- s match {
               case closed @ BreakerClosed(_) => status.put(closed).map(_ => false)
-              case open @ BreakerOpen(timeOpened) => {
-                if (currentTime > timeOpened) {
-                  status.put(BreakerOpen(currentTime + breakerOptions.resetTimeoutSecs)).map(_ => true)
-                } else status.put(open).map(_ => false)
-              }
-            }.flatMap { canaryResult =>
-              if (canaryResult) canaryCall(body)
-              else failingCall(breakerOptions)
+              case open @ BreakerOpen(timeOpened) =>
+                if (currentTime > timeOpened) status.put(BreakerOpen(currentTime + breakerOptions.resetTimeoutSecs)).map(_ => true)
+                else status.put(open).map(_ => false)
             }
+            result <- if (canaryResult) canaryCall(body) else failingCall(breakerOptions)
+          } yield {
+            result
           }
 
         def canaryCall(body: F[A]): F[A] =
           callIfClosed(body) <* status.put(BreakerClosed(0))
 
         def incError(): F[Unit] =
-          Utils.getCurrentTime.flatMap { currentTime =>
-            status.take.flatMap {
-              case BreakerClosed(errorCount) => {
+          for {
+            currentTime <- Utils.getCurrentTime
+            s <- status.take
+            _ <- s match {
+              case BreakerClosed(errorCount) =>
                 if (errorCount >= breakerOptions.maxBreakerFailures) status.put(BreakerOpen(currentTime + breakerOptions.resetTimeoutSecs))
                 else status.put(BreakerClosed(errorCount + 1))
-              }
-              case other => status.put(other)
+              case open => status.put(open)
             }
-          }
+          } yield ()
 
         def failingCall(breakerOptions: BreakerOptions): F[A] = ME.raiseError(CircuitBreakerException(breakerOptions.breakerDescription))
       }
