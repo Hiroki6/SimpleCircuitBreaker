@@ -1,10 +1,8 @@
 package core
 
-import java.time.Instant
-
-import cats.Applicative
-import cats.syntax.applicative._
+import cats.effect.Clock
+import scala.concurrent.duration
 
 object Utils {
-  def getCurrentTime[F[_]: Applicative]: F[Long] = Instant.now().getEpochSecond.pure[F]
+  def getCurrentTime[F[_]](implicit clock: Clock[F]): F[Long] = clock.realTime(duration.SECONDS)
 }
