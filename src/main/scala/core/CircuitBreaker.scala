@@ -10,6 +10,7 @@ import cats.syntax.functor._
 
 trait CircuitBreaker[F[_], A] {
   def withCircuitBreaker(body: F[A]): F[A]
+  def getStatus: F[BreakerStatus]
 }
 
 object CircuitBreaker {
@@ -25,11 +26,10 @@ object CircuitBreaker {
             case BreakerOpen(_)   => callIfOpen(body)
           }
 
+        override def getStatus: F[BreakerStatus] = status.read
+
         def callIfClosed(body: F[A]): F[A] =
-          body.attempt.flatMap {
-            case Right(v) => ME.pure(v)
-            case Left(e)  => incError() *> ME.raiseError(e)
-          }
+          body.handleErrorWith(e => incError() *> e.raiseError)
 
         def callIfOpen(body: F[A]): F[A] =
           for {
@@ -47,7 +47,7 @@ object CircuitBreaker {
           }
 
         def canaryCall(body: F[A]): F[A] =
-          callIfClosed(body) <* status.put(BreakerClosed(0))
+          callIfClosed(body) <* status.take.flatMap(_ => status.put(BreakerClosed(0)))
 
         def incError(): F[Unit] =
           for {
@@ -61,7 +61,7 @@ object CircuitBreaker {
             }
           } yield ()
 
-        def failingCall(breakerOptions: BreakerOptions): F[A] = ME.raiseError(CircuitBreakerException(breakerOptions.breakerDescription))
+        def failingCall(breakerOptions: BreakerOptions): F[A] = CircuitBreakerException(breakerOptions.breakerDescription).raiseError
       }
     }
 }

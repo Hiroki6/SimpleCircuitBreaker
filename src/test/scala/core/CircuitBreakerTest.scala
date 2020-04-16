@@ -3,7 +3,6 @@ package core
 import java.time.Instant
 
 import cats.syntax.semigroup._
-import cats.syntax.apply._
 import cats.effect.{ ContextShift, IO, Timer }
 import org.scalatest.freespec.AnyFreeSpec
 import org.scalatest.matchers.should._
@@ -21,7 +20,7 @@ class CircuitBreakerTest extends AnyFreeSpec with Matchers {
   implicit val timer: Timer[IO] = IO.timer(ExecutionContext.global)
 
   def correctService(req: Int): IO[String] = IO("success")
-  def failureService(req: Int): IO[String] = IO.raiseError(new Exception("error"))
+  def failureService: IO[String] = IO.raiseError(new Exception("error"))
 
   val breakerOptions = BreakerOptions(3, 60, "Test Circuit Breaker open.")
 
@@ -39,44 +38,62 @@ class CircuitBreakerTest extends AnyFreeSpec with Matchers {
 
   "Circuit Breaker" - {
     "When the breaker is closed, requests are transported directly" in {
-      val prog = CircuitBreaker.create[IO, String](breakerOptions).flatMap { circuitBreaker =>
+      val program = CircuitBreaker.create[IO, String](breakerOptions).flatMap { circuitBreaker =>
         circuitBreaker.withCircuitBreaker(correctService(1))
       }
 
-      prog.unsafeRunSync() shouldBe "success"
+      program.unsafeRunSync() shouldBe "success"
     }
 
     "When the breaker is open, requests are refused" in {
-      val prog = CircuitBreaker.create[IO, String](BreakerOpen(Instant.now().getEpochSecond), breakerOptions).flatMap { circuitBreaker =>
+      val program = CircuitBreaker.create[IO, String](BreakerOpen(Instant.now().getEpochSecond), breakerOptions).flatMap { circuitBreaker =>
         circuitBreaker.withCircuitBreaker(correctService(1))
       }
 
-      prog.attempt.unsafeRunSync() shouldBe Left(CircuitBreakerException(breakerOptions.breakerDescription))
+      program.attempt.unsafeRunSync() shouldBe Left(CircuitBreakerException(breakerOptions.breakerDescription))
     }
 
     "After a failure happens more than specific times, requests are refused" in {
-      val prog = CircuitBreaker.create[IO, String](breakerOptions.copy(maxBreakerFailures = 1)).flatMap { circuitBreaker =>
+      val program = CircuitBreaker.create[IO, String](breakerOptions.copy(maxBreakerFailures = 1)).flatMap { circuitBreaker =>
         retryingOnAllErrors(
           policy = RetryPolicies.limitRetries[IO](3),
           onError = logError("failureService")
         ) {
-            circuitBreaker.withCircuitBreaker(failureService(1))
+            circuitBreaker.withCircuitBreaker(failureService)
           }
       }
 
-      prog.attempt.unsafeRunSync() shouldBe Left(CircuitBreakerException(breakerOptions.breakerDescription))
+      program.attempt.unsafeRunSync() shouldBe Left(CircuitBreakerException(breakerOptions.breakerDescription))
+    }
+
+    "After a failure happens asynchronously more than specific times, requests are refused" in {
+      val program = CircuitBreaker.create[IO, String](breakerOptions.copy(maxBreakerFailures = 1)).flatMap { circuitBreaker =>
+        val r = circuitBreaker.withCircuitBreaker(failureService)
+        val p = for {
+          f1 <- r.start
+          f2 <- r.start
+          f3 <- r.start
+          _ <- f1.join
+          _ <- f2.join
+          _ <- f3.join
+        } yield ()
+
+        p.handleErrorWith(_ => circuitBreaker.getStatus)
+      }
+
+      assert(program.unsafeRunSync().isInstanceOf[BreakerOpen])
     }
 
     "After wait for the specific time during the breaker is opened, request are transported directly again." in {
       val RESET_TIME = 10
       val retry3times5s = limitRetries[IO](3) |+| constantDelay[IO]((RESET_TIME - 5).seconds)
       val retry3times10s = limitRetries[IO](1) |+| constantDelay[IO]((RESET_TIME + 10).seconds)
-      val prog = CircuitBreaker.create[IO, String](breakerOptions.copy(maxBreakerFailures = 1, resetTimeoutSecs = RESET_TIME)).flatMap { circuitBreaker =>
+      val program = CircuitBreaker.create[IO, String](breakerOptions.copy(maxBreakerFailures = 1, resetTimeoutSecs = RESET_TIME)).flatMap { circuitBreaker =>
         val failure3times: IO[String] = retryingOnAllErrors(
           policy = retry3times5s,
           onError = logError("failureService")
         ) {
-            circuitBreaker.withCircuitBreaker(failureService(1))
+            circuitBreaker.withCircuitBreaker(failureService)
           }
 
         val success: IO[String] = retryingOnAllErrors(
@@ -86,10 +103,10 @@ class CircuitBreakerTest extends AnyFreeSpec with Matchers {
             circuitBreaker.withCircuitBreaker(correctService(1))
           }
 
-        failure3times.attempt.flatMap { _ => IO.unit } *> success
+        failure3times.handleErrorWith(_ => success)
       }
 
-      prog.attempt.unsafeRunSync() shouldBe "success"
+      program.unsafeRunSync() shouldBe "success"
     }
   }
 }
