@@ -8,6 +8,10 @@ import cats.syntax.apply._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
+case class CircuitBreakerException(message: String) extends Exception {
+  override def getMessage: String = message
+}
+
 trait CircuitBreaker[F[_], A] {
   def withCircuitBreaker(body: F[A]): F[A]
   def getStatus: F[BreakerStatus]
