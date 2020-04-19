@@ -1,7 +1,5 @@
 package core
 
-import java.time.Instant
-
 import cats.syntax.semigroup._
 import cats.effect.{ ContextShift, IO, Timer }
 import org.scalatest.freespec.AnyFreeSpec
@@ -46,8 +44,12 @@ class CircuitBreakerTest extends AnyFreeSpec with Matchers {
     }
 
     "When the breaker is open, requests are refused" in {
-      val program = CircuitBreaker.create[IO, String](BreakerOpen(Instant.now().getEpochSecond), breakerOptions).flatMap { circuitBreaker =>
-        circuitBreaker.withCircuitBreaker(correctService(1))
+      val program = for {
+        currentTime <- Utils.getCurrentTime[IO]
+        circuitBreaker <- CircuitBreaker.createWithRef[IO, String](BreakerOpen(currentTime), breakerOptions)
+        response <- circuitBreaker.withCircuitBreaker(correctService(1))
+      } yield {
+        response
       }
 
       program.attempt.unsafeRunSync() shouldBe Left(CircuitBreakerException(breakerOptions.breakerDescription))
