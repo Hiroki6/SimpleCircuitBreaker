@@ -18,10 +18,10 @@ trait CircuitBreaker[F[_], A] {
 }
 
 object CircuitBreaker {
-  def create[F[_]: Clock, A](breakerOptions: BreakerOptions)(implicit S: Concurrent[F], ME: MonadError[F, Throwable]): F[CircuitBreaker[F, A]] =
+  def create[F[_], A](breakerOptions: BreakerOptions)(implicit C: Clock[F], S: Concurrent[F], ME: MonadError[F, Throwable]): F[CircuitBreaker[F, A]] =
     create(BreakerClosed(0), breakerOptions)
 
-  private[core] def create[F[_]: Clock, A](breakerStatus: BreakerStatus, breakerOptions: BreakerOptions)(implicit S: Concurrent[F], ME: MonadError[F, Throwable]): F[CircuitBreaker[F, A]] =
+  private[core] def create[F[_], A](breakerStatus: BreakerStatus, breakerOptions: BreakerOptions)(implicit C: Clock[F], S: Concurrent[F], ME: MonadError[F, Throwable]): F[CircuitBreaker[F, A]] =
     MVar.of[F, BreakerStatus](breakerStatus).map { status =>
       new CircuitBreaker[F, A] {
         override def withCircuitBreaker(body: F[A]): F[A] =
