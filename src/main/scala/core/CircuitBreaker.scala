@@ -12,22 +12,25 @@ case class CircuitBreakerException(message: String) extends Exception {
   override def getMessage: String = message
 }
 
-trait CircuitBreaker[F[_], A] {
-  def withCircuitBreaker(body: F[A]): F[A]
+trait CircuitBreaker[F[_]] {
+  def withCircuitBreaker[A](body: => F[A]): F[A]
   def getStatus: F[BreakerStatus]
 }
 
 object CircuitBreaker {
-  def create[F[_], A](breakerOptions: BreakerOptions)(implicit C: Clock[F], S: Concurrent[F], ME: MonadError[F, Throwable]): F[CircuitBreaker[F, A]] =
-    createWithRef(BreakerClosed(0), breakerOptions)
+  def create[F[_]](breakerOptions: BreakerOptions)(implicit C: Clock[F], S: Concurrent[F], ME: MonadError[F, Throwable]): F[CircuitBreaker[F]] =
+    create(BreakerClosed(0), breakerOptions)
+
+  def create[F[_]](breakerStatus: BreakerStatus, breakerOptions: BreakerOptions)(implicit C: Clock[F], S: Concurrent[F], ME: MonadError[F, Throwable]): F[CircuitBreaker[F]] =
+    createWithRef(breakerStatus, breakerOptions)
 
   /**
    * CircuitBreaker with Ref
    */
-  private[core] def createWithRef[F[_], A](breakerStatus: BreakerStatus, breakerOptions: BreakerOptions)(implicit C: Clock[F], S: Concurrent[F], ME: MonadError[F, Throwable]): F[CircuitBreaker[F, A]] =
+  private[core] def createWithRef[F[_]](breakerStatus: BreakerStatus, breakerOptions: BreakerOptions)(implicit C: Clock[F], S: Concurrent[F], ME: MonadError[F, Throwable]): F[CircuitBreaker[F]] =
     Ref.of[F, BreakerStatus](breakerStatus).map { status =>
-      new CircuitBreaker[F, A] {
-        override def withCircuitBreaker(body: F[A]): F[A] =
+      new CircuitBreaker[F] {
+        override def withCircuitBreaker[A](body: => F[A]): F[A] =
           getStatus.flatMap {
             case BreakerClosed(_) => callIfClosed(body)
             case BreakerOpen(_)   => callIfOpen(body)
@@ -35,10 +38,10 @@ object CircuitBreaker {
 
         override def getStatus: F[BreakerStatus] = status.get
 
-        def callIfClosed(body: F[A]): F[A] =
-          body.handleErrorWith(e => incError() *> e.raiseError)
+        def callIfClosed[A](body: F[A]): F[A] =
+          body.handleErrorWith(e => incError() >> e.raiseError)
 
-        def callIfOpen(body: F[A]): F[A] = for {
+        def callIfOpen[A](body: => F[A]): F[A] = for {
           currentTime <- Utils.getCurrentTime[F]
           canaryResult <- status.modify {
             case closed @ BreakerClosed(_) => (closed, false)
@@ -51,7 +54,7 @@ object CircuitBreaker {
           result
         }
 
-        def canaryCall(body: F[A]): F[A] =
+        def canaryCall[A](body: F[A]): F[A] =
           callIfClosed(body) <* status.set(BreakerClosed(0))
 
         def incError(): F[Unit] = for {
@@ -64,17 +67,17 @@ object CircuitBreaker {
           }
         } yield ()
 
-        def failingCall(breakerOptions: BreakerOptions): F[A] = CircuitBreakerException(breakerOptions.breakerDescription).raiseError
+        def failingCall[A](breakerOptions: BreakerOptions): F[A] = CircuitBreakerException(breakerOptions.breakerDescription).raiseError
       }
     }
 
   /**
    * CircuitBreaker with MVar
    */
-  private[core] def createWithMVar[F[_], A](breakerStatus: BreakerStatus, breakerOptions: BreakerOptions)(implicit C: Clock[F], S: Concurrent[F], ME: MonadError[F, Throwable]): F[CircuitBreaker[F, A]] =
+  private[core] def createWithMVar[F[_]](breakerStatus: BreakerStatus, breakerOptions: BreakerOptions)(implicit C: Clock[F], S: Concurrent[F], ME: MonadError[F, Throwable]): F[CircuitBreaker[F]] =
     MVar.of[F, BreakerStatus](breakerStatus).map { status =>
-      new CircuitBreaker[F, A] {
-        override def withCircuitBreaker(body: F[A]): F[A] =
+      new CircuitBreaker[F] {
+        override def withCircuitBreaker[A](body: => F[A]): F[A] =
           status.read.flatMap {
             case BreakerClosed(_) => callIfClosed(body)
             case BreakerOpen(_)   => callIfOpen(body)
@@ -82,10 +85,10 @@ object CircuitBreaker {
 
         override def getStatus: F[BreakerStatus] = status.read
 
-        def callIfClosed(body: F[A]): F[A] =
-          body.handleErrorWith(e => incError() *> e.raiseError)
+        def callIfClosed[A](body: F[A]): F[A] =
+          body.handleErrorWith(e => incError() >> e.raiseError)
 
-        def callIfOpen(body: F[A]): F[A] =
+        def callIfOpen[A](body: => F[A]): F[A] =
           for {
             currentTime <- Utils.getCurrentTime[F]
             s <- status.take
@@ -100,7 +103,7 @@ object CircuitBreaker {
             result
           }
 
-        def canaryCall(body: F[A]): F[A] =
+        def canaryCall[A](body: F[A]): F[A] =
           callIfClosed(body) <* status.take.flatMap(_ => status.put(BreakerClosed(0)))
 
         def incError(): F[Unit] =
@@ -115,7 +118,7 @@ object CircuitBreaker {
             }
           } yield ()
 
-        def failingCall(breakerOptions: BreakerOptions): F[A] = CircuitBreakerException(breakerOptions.breakerDescription).raiseError
+        def failingCall[A](breakerOptions: BreakerOptions): F[A] = CircuitBreakerException(breakerOptions.breakerDescription).raiseError
       }
     }
 }

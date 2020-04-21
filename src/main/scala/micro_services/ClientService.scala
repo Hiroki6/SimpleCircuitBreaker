@@ -20,32 +20,32 @@ import scala.concurrent.duration._
 object ClientService extends IOApp {
   val PORT = 8080
 
-  def internalRequest(client: Client[IO], circuitBreaker: CircuitBreaker[IO, Response[IO]]) = retryingOnAllErrors(
+  def internalRequest(client: Client[IO], circuitBreaker: CircuitBreaker[IO]) = retryingOnAllErrors(
     policy = limitRetries[IO](3) |+| exponentialBackoff[IO](10.seconds),
     onError = retry.noop[IO, Throwable]
   ) {
-    circuitBreaker.withCircuitBreaker {
+    circuitBreaker.withCircuitBreaker[Response[IO]] {
       val url = s"http://localhost:${ServerService.PORT}"
       client.expect[String](url).flatMap(res => Ok(res))
     }
   }
 
-  val client = HttpRoutes.of[IO] {
+  def client(circuitBreaker: CircuitBreaker[IO]) = HttpRoutes.of[IO] {
     case GET -> Root => {
       BlazeClientBuilder[IO](global).resource.use { client =>
-        CircuitBreaker.create[IO, Response[IO]](BreakerOptions.breakerOptions).flatMap { circuitBreaker =>
-          internalRequest(client, circuitBreaker)
-        }
+        internalRequest(client, circuitBreaker)
       }
     }
   }.orNotFound
 
-  def run(args: List[String]): IO[ExitCode] =
-    BlazeServerBuilder[IO]
+  def run(args: List[String]): IO[ExitCode] = for {
+    circuitBreaker <- CircuitBreaker.create[IO](BreakerOptions.breakerOptions)
+    exitCode <- BlazeServerBuilder[IO]
       .bindHttp(PORT, "localhost")
-      .withHttpApp(client)
+      .withHttpApp(client(circuitBreaker))
       .serve
       .compile
       .drain
       .as(ExitCode.Success)
+  } yield exitCode
 }

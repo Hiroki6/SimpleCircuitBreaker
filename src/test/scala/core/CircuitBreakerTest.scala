@@ -36,7 +36,7 @@ class CircuitBreakerTest extends AnyFreeSpec with Matchers {
 
   "Circuit Breaker" - {
     "When the breaker is closed, requests are transported directly" in {
-      val program = CircuitBreaker.create[IO, String](breakerOptions).flatMap { circuitBreaker =>
+      val program = CircuitBreaker.create[IO](breakerOptions).flatMap { circuitBreaker =>
         circuitBreaker.withCircuitBreaker(correctService(1))
       }
 
@@ -46,7 +46,7 @@ class CircuitBreakerTest extends AnyFreeSpec with Matchers {
     "When the breaker is open, requests are refused" in {
       val program = for {
         currentTime <- Utils.getCurrentTime[IO]
-        circuitBreaker <- CircuitBreaker.createWithRef[IO, String](BreakerOpen(currentTime), breakerOptions)
+        circuitBreaker <- CircuitBreaker.create[IO](BreakerOpen(currentTime), breakerOptions)
         response <- circuitBreaker.withCircuitBreaker(correctService(1))
       } yield {
         response
@@ -56,7 +56,7 @@ class CircuitBreakerTest extends AnyFreeSpec with Matchers {
     }
 
     "After a failure happens more than specific times, requests are refused" in {
-      val program = CircuitBreaker.create[IO, String](breakerOptions.copy(maxBreakerFailures = 1)).flatMap { circuitBreaker =>
+      val program = CircuitBreaker.create[IO](breakerOptions.copy(maxBreakerFailures = 1)).flatMap { circuitBreaker =>
         retryingOnAllErrors(
           policy = RetryPolicies.limitRetries[IO](3),
           onError = logError("failureService")
@@ -69,7 +69,7 @@ class CircuitBreakerTest extends AnyFreeSpec with Matchers {
     }
 
     "After a failure happens asynchronously more than specific times, requests are refused" in {
-      val program = CircuitBreaker.create[IO, String](breakerOptions.copy(maxBreakerFailures = 1)).flatMap { circuitBreaker =>
+      val program = CircuitBreaker.create[IO](breakerOptions.copy(maxBreakerFailures = 1)).flatMap { circuitBreaker =>
         val r = circuitBreaker.withCircuitBreaker(failureService)
         val p = for {
           f1 <- r.start
@@ -90,7 +90,7 @@ class CircuitBreakerTest extends AnyFreeSpec with Matchers {
       val RESET_TIME = 10
       val retry3times5s = limitRetries[IO](3) |+| constantDelay[IO]((RESET_TIME - 5).seconds)
       val retry3times10s = limitRetries[IO](1) |+| constantDelay[IO]((RESET_TIME + 10).seconds)
-      val program = CircuitBreaker.create[IO, String](breakerOptions.copy(maxBreakerFailures = 1, resetTimeoutSecs = RESET_TIME)).flatMap { circuitBreaker =>
+      val program = CircuitBreaker.create[IO](breakerOptions.copy(maxBreakerFailures = 1, resetTimeoutSecs = RESET_TIME)).flatMap { circuitBreaker =>
         val failure3times: IO[String] = retryingOnAllErrors(
           policy = retry3times5s,
           onError = logError("failureService")
