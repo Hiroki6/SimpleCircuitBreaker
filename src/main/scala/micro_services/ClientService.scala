@@ -24,7 +24,7 @@ object ClientService extends IOApp {
     policy = limitRetries[IO](3) |+| exponentialBackoff[IO](10.seconds),
     onError = retry.noop[IO, Throwable]
   ) {
-    circuitBreaker.withCircuitBreaker[Response[IO]] {
+    circuitBreaker.run[Response[IO]] {
       val url = s"http://localhost:${ServerService.PORT}"
       client.expect[String](url).flatMap(res => Ok(res))
     }

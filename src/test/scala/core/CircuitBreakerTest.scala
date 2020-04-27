@@ -37,7 +37,7 @@ class CircuitBreakerTest extends AnyFreeSpec with Matchers {
   "Circuit Breaker" - {
     "When the breaker is closed, requests are transported directly" in {
       val program = CircuitBreaker.create[IO](breakerOptions).flatMap { circuitBreaker =>
-        circuitBreaker.withCircuitBreaker(correctService(1))
+        circuitBreaker.run(correctService(1))
       }
 
       program.unsafeRunSync() shouldBe "success"
@@ -47,7 +47,7 @@ class CircuitBreakerTest extends AnyFreeSpec with Matchers {
       val program = for {
         currentTime <- Utils.getCurrentTime[IO]
         circuitBreaker <- CircuitBreaker.create[IO](BreakerOpen(currentTime), breakerOptions)
-        response <- circuitBreaker.withCircuitBreaker(correctService(1))
+        response <- circuitBreaker.run(correctService(1))
       } yield {
         response
       }
@@ -61,7 +61,7 @@ class CircuitBreakerTest extends AnyFreeSpec with Matchers {
           policy = RetryPolicies.limitRetries[IO](3),
           onError = logError("failureService")
         ) {
-            circuitBreaker.withCircuitBreaker(failureService)
+            circuitBreaker.run(failureService)
           }
       }
 
@@ -70,7 +70,7 @@ class CircuitBreakerTest extends AnyFreeSpec with Matchers {
 
     "After a failure happens asynchronously more than specific times, requests are refused" in {
       val program = CircuitBreaker.create[IO](breakerOptions.copy(maxBreakerFailures = 1)).flatMap { circuitBreaker =>
-        val r = circuitBreaker.withCircuitBreaker(failureService)
+        val r = circuitBreaker.run(failureService)
         val p = for {
           f1 <- r.start
           f2 <- r.start
@@ -95,14 +95,14 @@ class CircuitBreakerTest extends AnyFreeSpec with Matchers {
           policy = retry3times5s,
           onError = logError("failureService")
         ) {
-            circuitBreaker.withCircuitBreaker(failureService)
+            circuitBreaker.run(failureService)
           }
 
         val success: IO[String] = retryingOnAllErrors(
           policy = retry3times10s,
           onError = logError("correctService")
         ) {
-            circuitBreaker.withCircuitBreaker(correctService(1))
+            circuitBreaker.run(correctService(1))
           }
 
         failure3times.handleErrorWith(_ => success)

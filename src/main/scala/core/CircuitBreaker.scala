@@ -13,7 +13,7 @@ case class CircuitBreakerException(message: String) extends Exception {
 }
 
 trait CircuitBreaker[F[_]] {
-  def withCircuitBreaker[A](body: => F[A]): F[A]
+  def run[A](body: => F[A]): F[A]
   def getStatus: F[BreakerStatus]
 }
 
@@ -30,7 +30,7 @@ object CircuitBreaker {
   private[core] def createWithRef[F[_]](breakerStatus: BreakerStatus, breakerOptions: BreakerOptions)(implicit C: Clock[F], S: Concurrent[F], ME: MonadError[F, Throwable]): F[CircuitBreaker[F]] =
     Ref.of[F, BreakerStatus](breakerStatus).map { status =>
       new CircuitBreaker[F] {
-        override def withCircuitBreaker[A](body: => F[A]): F[A] =
+        override def run[A](body: => F[A]): F[A] =
           getStatus.flatMap {
             case BreakerClosed(_) => callIfClosed(body)
             case BreakerOpen(_)   => callIfOpen(body)
@@ -77,7 +77,7 @@ object CircuitBreaker {
   private[core] def createWithMVar[F[_]](breakerStatus: BreakerStatus, breakerOptions: BreakerOptions)(implicit C: Clock[F], S: Concurrent[F], ME: MonadError[F, Throwable]): F[CircuitBreaker[F]] =
     MVar.of[F, BreakerStatus](breakerStatus).map { status =>
       new CircuitBreaker[F] {
-        override def withCircuitBreaker[A](body: => F[A]): F[A] =
+        override def run[A](body: => F[A]): F[A] =
           status.read.flatMap {
             case BreakerClosed(_) => callIfClosed(body)
             case BreakerOpen(_)   => callIfOpen(body)
