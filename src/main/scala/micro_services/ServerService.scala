@@ -1,11 +1,11 @@
 package micro_services
 
-import cats.syntax.functor._
+import cats.syntax.functor.*
 import cats.effect.{ ExitCode, IO, IOApp }
 import org.http4s.HttpRoutes
-import org.http4s.dsl.io._
-import org.http4s.implicits._
-import org.http4s.server.blaze.BlazeServerBuilder
+import org.http4s.blaze.server.BlazeServerBuilder
+import org.http4s.dsl.io.*
+import org.http4s.implicits.*
 
 object ServerService extends IOApp {
   val PORT = 8081
