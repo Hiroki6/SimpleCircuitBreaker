@@ -3,8 +3,6 @@ package core
 import cats.syntax.semigroup.*
 import cats.effect.IO
 import munit.CatsEffectSuite
-import org.scalatest.freespec.AnyFreeSpec
-import org.scalatest.matchers.should.*
 import retry.*
 import retry.RetryDetails.*
 import retry.RetryPolicies.*
@@ -20,7 +18,7 @@ class CircuitBreakerSuite extends CatsEffectSuite {
 
   override def munitTimeout: Duration = 60.seconds
 
-  val breakerOptions = BreakerOptions(3, 60.seconds, "Test Circuit Breaker open.")
+  private val breakerOptions = BreakerOptions(3, 60.seconds, "Test Circuit Breaker open.")
 
   def logError(action: String)(err: Throwable, details: RetryDetails): IO[Unit] = details match {
     case WillDelayAndRetry(nextDelay: FiniteDuration, retriesSoFar: Int, cumulativeDelay: FiniteDuration) =>
@@ -69,14 +67,14 @@ class CircuitBreakerSuite extends CatsEffectSuite {
 
   test("After failures happened asynchronously more than specific times, requests are refused") {
     val program = CircuitBreaker.create[IO](breakerOptions.copy(maxBreakerFailures = 1)).flatMap { circuitBreaker =>
-      val r = circuitBreaker.run(failureService)
+      val r: IO[String] = circuitBreaker.run(failureService)
       val p = for {
         f1 <- r.start
         f2 <- r.start
         f3 <- r.start
-        _ <- f1.join
-        _ <- f2.join
-        _ <- f3.join
+        _ <- f1.joinWithNever
+        _ <- f2.joinWithNever
+        _ <- f3.joinWithNever
       } yield ()
 
       p.handleErrorWith(_ => circuitBreaker.getStatus)

@@ -28,7 +28,7 @@ object CircuitBreaker {
    * CircuitBreaker with Ref
    */
   private[core] def createWithRef[F[_]](breakerState: BreakerState, breakerOptions: BreakerOptions)(using C: Clock[F], S: Concurrent[F], ME: MonadError[F, Throwable]): F[CircuitBreaker[F]] =
-    Ref.of[F, BreakerState](breakerState).map { status =>
+    Ref[F].of(breakerState).map { status =>
       new CircuitBreaker[F] {
         override def run[A](body: => F[A]): F[A] =
           getStatus.flatMap {
