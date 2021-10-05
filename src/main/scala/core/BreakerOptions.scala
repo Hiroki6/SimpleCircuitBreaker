@@ -2,9 +2,13 @@ package core
 import com.typesafe.config.ConfigFactory
 
 import java.util.concurrent.TimeUnit
-import scala.concurrent.duration._
+import scala.concurrent.duration.*
 
-case class BreakerOptions(maxBreakerFailures: Int, resetTimeoutSecs: FiniteDuration, breakerDescription: String)
+case class BreakerOptions(
+    maxBreakerFailures: Int,
+    resetTimeoutSecs: FiniteDuration,
+    breakerDescription: String
+)
 
 object BreakerOptions {
   private val config = ConfigFactory.load()

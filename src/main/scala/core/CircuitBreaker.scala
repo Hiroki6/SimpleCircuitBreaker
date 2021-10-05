@@ -1,12 +1,13 @@
 package core
 
 import cats.MonadError
-import cats.effect.{ Clock, Concurrent }
+import cats.effect.{Clock, Concurrent}
 import cats.effect.Ref
-import cats.syntax.applicativeError._
-import cats.syntax.apply._
-import cats.syntax.flatMap._
-import cats.syntax.functor._
+import cats.syntax.applicativeError.*
+import cats.syntax.apply.*
+import cats.syntax.flatMap.*
+import cats.syntax.functor.*
+import BreakerState.*
 
 case class CircuitBreakerException(message: String) extends Exception {
   override def getMessage: String = message
@@ -18,16 +19,30 @@ trait CircuitBreaker[F[_]] {
 }
 
 object CircuitBreaker {
-  def create[F[_]](breakerOptions: BreakerOptions)(using C: Clock[F], S: Concurrent[F], ME: MonadError[F, Throwable]): F[CircuitBreaker[F]] =
+  def create[F[_]](breakerOptions: BreakerOptions)(using
+      C: Clock[F],
+      S: Concurrent[F],
+      ME: MonadError[F, Throwable]
+  ): F[CircuitBreaker[F]] =
     create(BreakerClosed(0), breakerOptions)
 
-  def create[F[_]](breakerState: BreakerState, breakerOptions: BreakerOptions)(using C: Clock[F], S: Concurrent[F], ME: MonadError[F, Throwable]): F[CircuitBreaker[F]] =
+  def create[F[_]](breakerState: BreakerState, breakerOptions: BreakerOptions)(using
+      C: Clock[F],
+      S: Concurrent[F],
+      ME: MonadError[F, Throwable]
+  ): F[CircuitBreaker[F]] =
     createWithRef(breakerState, breakerOptions)
 
-  /**
-   * CircuitBreaker with Ref
-   */
-  private[core] def createWithRef[F[_]](breakerState: BreakerState, breakerOptions: BreakerOptions)(using C: Clock[F], S: Concurrent[F], ME: MonadError[F, Throwable]): F[CircuitBreaker[F]] =
+  /** CircuitBreaker with Ref
+    */
+  private[core] def createWithRef[F[_]](
+      breakerState: BreakerState,
+      breakerOptions: BreakerOptions
+  )(using
+      C: Clock[F],
+      S: Concurrent[F],
+      ME: MonadError[F, Throwable]
+  ): F[CircuitBreaker[F]] =
     Ref[F].of(breakerState).map { status =>
       new CircuitBreaker[F] {
         override def run[A](body: => F[A]): F[A] =
@@ -46,7 +61,8 @@ object CircuitBreaker {
           canaryResult <- status.modify {
             case closed @ BreakerClosed(_) => (closed, false)
             case open @ BreakerOpen(timeOpened) =>
-              if (currentTime > timeOpened) (BreakerOpen(currentTime + breakerOptions.resetTimeoutSecs), true)
+              if (currentTime > timeOpened)
+                (BreakerOpen(currentTime + breakerOptions.resetTimeoutSecs), true)
               else (open, false)
           }
           result <- if (canaryResult) canaryCall(body) else failingCall(breakerOptions)
@@ -61,14 +77,15 @@ object CircuitBreaker {
           currentTime <- Utils.getCurrentTime[F]
           _ <- status.modify {
             case BreakerClosed(errorCount) =>
-              if (errorCount >= breakerOptions.maxBreakerFailures) (BreakerOpen(currentTime + breakerOptions.resetTimeoutSecs), ())
+              if (errorCount >= breakerOptions.maxBreakerFailures)
+                (BreakerOpen(currentTime + breakerOptions.resetTimeoutSecs), ())
               else (BreakerClosed(errorCount + 1), ())
             case open => (open, ())
           }
         } yield ()
 
-        def failingCall[A](breakerOptions: BreakerOptions): F[A] = CircuitBreakerException(breakerOptions.breakerDescription).raiseError
+        def failingCall[A](breakerOptions: BreakerOptions): F[A] =
+          CircuitBreakerException(breakerOptions.breakerDescription).raiseError
       }
     }
 }
-
