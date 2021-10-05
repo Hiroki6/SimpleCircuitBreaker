@@ -1,10 +1,20 @@
 package core
+import com.typesafe.config.ConfigFactory
 
-import pureconfig._
-import pureconfig.generic.auto._
+import java.util.concurrent.TimeUnit
+import scala.concurrent.duration.*
 
-case class BreakerOptions(maxBreakerFailures: Int, resetTimeoutSecs: Long, breakerDescription: String)
+case class BreakerOptions(
+    maxBreakerFailures: Int,
+    resetTimeoutSecs: FiniteDuration,
+    breakerDescription: String
+)
 
 object BreakerOptions {
-  val breakerOptions = ConfigSource.default.loadOrThrow[BreakerOptions]
+  private val config = ConfigFactory.load()
+  val breakerOptions: BreakerOptions = BreakerOptions(
+    config.getInt("max-breaker-failures"),
+    config.getLong("reset-timeout-secs").seconds,
+    config.getString("breaker-description")
+  )
 }
